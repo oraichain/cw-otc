@@ -1,0 +1,27 @@
+[workspace]
+
+resolver = '2'
+
+members = ["packages/*", "contracts/*", "tests"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Rhaki"]
+
+
+[workspace.dependencies]
+cosmwasm-schema = "1.5"
+cosmwasm-std = "1.5"
+cw-storage-plus = "1.1.0"
+cw2 = "1.0.1"
+cw20 = "1.1.2"
+cw721 = "0.18.0"
+schemars = "0.8.10"
+serde = { version = "1.0.145", default-features = false, features = ["derive"] }
+thiserror = "1.0.31"
+rhaki-cw-plus = "0.6.12"
+cw-otc-common = { path = "./packages/cw-otc-common", version = "0.1.0" }
+cw-otc = { path = "./contracts/cw-otc", version = "0.1.0" }
+
+cw-multi-test = "0.16.5"
