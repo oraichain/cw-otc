@@ -17,4 +17,5 @@
 .idea
 
 # Rust
+artifacts
 **/*cargo.lock

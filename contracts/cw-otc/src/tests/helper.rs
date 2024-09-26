@@ -1,8 +1,8 @@
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Coin, Empty, StdResult, Uint128};
+use cosmwasm_testing_util::{test_tube::FEE_DENOM, ExecuteResponse, MockResult};
 use cw20::{BalanceResponse, Cw20Coin};
 use cw721::OwnerOfResponse;
-use cw_multi_test::{App, AppResponse, Executor};
 use cw_otc_common::{
     definitions::{OtcItem, OtcItemInfo, OtcPosition},
     msgs::{CreateOtcMsg, ExecuteOtcMsg, OtcItemRegistration},
@@ -13,12 +13,8 @@ use rhaki_cw_plus::{
     traits::IntoAddr,
 };
 
-use crate::{
-    app_ext::{create_code, MergeCoin},
-    cw721_value,
-};
-
-pub type AppResult = Result<AppResponse, anyhow::Error>;
+use super::app_ext::{MergeCoin, TestMockApp};
+pub type AppResult = MockResult<ExecuteResponse>;
 
 #[cw_serde]
 pub enum TokenType {
@@ -38,15 +34,15 @@ pub struct Def<'a> {
 }
 
 impl<'a> Def<'a> {
-    pub fn new() -> Self {
+    pub fn new(owner: &'a str, fee_collector: &'a str) -> Self {
         Self {
             addr_otc: None,
             code_id_cw20: None,
             code_id_cw721: None,
-            fee_collector: "fee_collector",
-            owner: "owner",
+            fee_collector,
+            owner,
             otc_fee: vec![OtcItemInfo::Token {
-                denom: "uluna".to_string(),
+                denom: FEE_DENOM.to_string(),
                 amount: 100_u128.into(),
             }],
         }
@@ -63,32 +59,16 @@ impl<'a> Def<'a> {
     }
 }
 
-pub fn startup(def: &mut Def) -> App {
-    let mut app = App::default();
-
-    let otc_code_id = app.store_code(create_code(
-        cw_otc::contract::instantiate,
-        cw_otc::contract::execute,
-        cw_otc::contract::query,
-    ));
-
-    let cw20_code_id = app.store_code(create_code(
-        cw20_base::contract::instantiate,
-        cw20_base::contract::execute,
-        cw20_base::contract::query,
-    ));
-
-    let cw721_code_id = app.store_code(create_code(
-        cw721_value::instantiate,
-        cw721_value::execute,
-        cw721_value::query,
-    ));
+pub fn startup(app: &mut TestMockApp, def: &mut Def) {
+    let otc_code_id = app.upload(include_bytes!("./testdata/cw-otc.wasm"));
+    let cw20_code_id = app.upload(include_bytes!("./testdata/cw20-base.wasm"));
+    let cw721_code_id = app.upload(include_bytes!("./testdata/cw721-base.wasm"));
 
     def.code_id_cw20 = Some(cw20_code_id);
     def.code_id_cw721 = Some(cw721_code_id);
 
     let otc_addr = app
-        .instantiate_contract(
+        .instantiate(
             otc_code_id,
             def.owner.into_unchecked_addr(),
             &cw_otc_common::msgs::InstantiateMsg {
@@ -97,14 +77,11 @@ pub fn startup(def: &mut Def) -> App {
                 fee_collector: def.fee_collector.to_string(),
             },
             &[],
-            "otc".to_string(),
-            Some(def.owner.to_string()),
+            "otc",
         )
         .unwrap();
 
     def.addr_otc = Some(otc_addr);
-
-    app
 }
 
 fn native_funds_from_otc_item_registration(items: &[OtcItemRegistration]) -> Vec<Coin> {
@@ -134,7 +111,7 @@ fn native_funds_from_otc_item(items: &[OtcItem]) -> Vec<Coin> {
 }
 
 pub fn create_token(
-    app: &mut App,
+    app: &mut TestMockApp,
     def: &mut Def,
     token_name: &str,
     token_type: TokenType,
@@ -142,7 +119,7 @@ pub fn create_token(
 ) -> Addr {
     match token_type {
         TokenType::Cw20 => app
-            .instantiate_contract(
+            .instantiate(
                 def.code_id_cw20.unwrap(),
                 def.owner.into_unchecked_addr(),
                 &cw20_base::msg::InstantiateMsg {
@@ -163,13 +140,12 @@ pub fn create_token(
                     marketing: None,
                 },
                 &[],
-                token_name.to_string(),
-                Some(def.owner.to_string()),
+                token_name,
             )
             .unwrap(),
         TokenType::Cw721 => {
             let addr = app
-                .instantiate_contract(
+                .instantiate(
                     def.code_id_cw721.unwrap(),
                     def.owner.into_unchecked_addr(),
                     &cw721_base::msg::InstantiateMsg {
@@ -178,8 +154,7 @@ pub fn create_token(
                         minter: def.owner.to_string(),
                     },
                     &[],
-                    token_name.to_string(),
-                    Some(def.owner.to_string()),
+                    token_name,
                 )
                 .unwrap();
 
@@ -194,7 +169,7 @@ pub fn create_token(
 }
 
 pub fn mint_token(
-    app: &mut App,
+    app: &mut TestMockApp,
     def: &mut Def,
     to: &str,
     token_info: (&str, TokenType),
@@ -202,7 +177,7 @@ pub fn mint_token(
 ) {
     match token_info.1 {
         TokenType::Cw20 => {
-            app.execute_contract(
+            app.execute(
                 def.owner.into_unchecked_addr(),
                 token_info.0.into_unchecked_addr(),
                 &cw20_base::msg::ExecuteMsg::Mint {
@@ -214,16 +189,15 @@ pub fn mint_token(
             .unwrap();
         }
         TokenType::Native => {
-            app.sudo(cw_multi_test::SudoMsg::Bank(
-                cw_multi_test::BankSudo::Mint {
-                    to_address: to.to_string(),
-                    amount: vec![Coin::new(amount.into_uint128().into(), token_info.0)],
-                },
-            ))
+            app.send_coins(
+                Addr::unchecked(def.owner),
+                Addr::unchecked(to),
+                &[Coin::new(amount.into_uint128().into(), token_info.0)],
+            )
             .unwrap();
         }
         TokenType::Cw721 => {
-            app.execute_contract(
+            app.execute(
                 def.owner.into_unchecked_addr(),
                 token_info.0.into_unchecked_addr(),
                 &cw721_base::ExecuteMsg::Mint::<Value, Empty> {
@@ -240,7 +214,7 @@ pub fn mint_token(
 }
 
 pub fn increase_allowance(
-    app: &mut App,
+    app: &mut TestMockApp,
     sender: &str,
     to: &str,
     addr: &Addr,
@@ -249,7 +223,7 @@ pub fn increase_allowance(
 ) {
     match token_type {
         TokenType::Cw20 => {
-            app.execute_contract(
+            app.execute(
                 sender.into_unchecked_addr(),
                 addr.clone(),
                 &cw20::Cw20ExecuteMsg::IncreaseAllowance {
@@ -262,7 +236,7 @@ pub fn increase_allowance(
             .unwrap();
         }
         TokenType::Cw721 => {
-            app.execute_contract(
+            app.execute(
                 sender.into_unchecked_addr(),
                 addr.clone(),
                 &cw721_base::ExecuteMsg::Approve::<Value, Empty> {
@@ -281,7 +255,7 @@ pub fn increase_allowance(
 // run
 
 pub fn run_create_otc(
-    app: &mut App,
+    app: &mut TestMockApp,
     def: &mut Def,
     creator: &str,
     executor: &str,
@@ -295,7 +269,7 @@ pub fn run_create_otc(
 
     let coins = coins.merge();
 
-    app.execute_contract(
+    app.execute(
         creator.into_unchecked_addr(),
         def.addr_otc.clone().unwrap(),
         &cw_otc_common::msgs::ExecuteMsg::CreateOtc(CreateOtcMsg {
@@ -308,7 +282,7 @@ pub fn run_create_otc(
 }
 
 pub fn run_execute_otc(
-    app: &mut App,
+    app: &mut TestMockApp,
     def: &mut Def,
     sender: &str,
     id: u64,
@@ -321,7 +295,7 @@ pub fn run_execute_otc(
     coins.append(&mut extra_coin);
 
     let coins = coins.merge();
-    app.execute_contract(
+    app.execute(
         sender.into_unchecked_addr(),
         def.addr_otc.clone().unwrap(),
         &cw_otc_common::msgs::ExecuteMsg::ExecuteOtc(ExecuteOtcMsg { id }),
@@ -331,48 +305,47 @@ pub fn run_execute_otc(
 
 // queries
 
-pub fn qy_otc_active_position(app: &App, def: &Def, id: u64) -> StdResult<OtcPosition> {
-    app.wrap().query_wasm_smart(
+pub fn qy_otc_active_position(app: &TestMockApp, def: &Def, id: u64) -> StdResult<OtcPosition> {
+    app.query(
         def.addr_otc.clone().unwrap(),
         &cw_otc_common::msgs::QueryMsg::Position { id },
     )
 }
 
-pub fn qy_otc_executed_position(app: &App, def: &Def, id: u64) -> StdResult<OtcPosition> {
-    app.wrap().query_wasm_smart(
+pub fn qy_otc_executed_position(app: &TestMockApp, def: &Def, id: u64) -> StdResult<OtcPosition> {
+    app.query(
         def.addr_otc.clone().unwrap(),
         &cw_otc_common::msgs::QueryMsg::Position { id },
     )
 }
 
-pub fn qy_balance_native(app: &App, denom: &str, user: &str) -> Uint128 {
-    app.wrap().query_balance(user, denom).unwrap().amount
+pub fn qy_balance_native(app: &TestMockApp, denom: &str, user: &str) -> Uint128 {
+    app.query_balance(Addr::unchecked(user), denom.to_string())
+        .unwrap()
 }
 
-pub fn qy_balance_cw20(app: &App, addr: &Addr, user: &str) -> Uint128 {
-    app.wrap()
-        .query_wasm_smart::<BalanceResponse>(
-            addr,
+pub fn qy_balance_cw20(app: &TestMockApp, addr: &Addr, user: &str) -> Uint128 {
+    let ret: BalanceResponse = app
+        .query(
+            addr.clone(),
             &cw20::Cw20QueryMsg::Balance {
                 address: user.to_string(),
             },
         )
-        .unwrap()
-        .balance
+        .unwrap();
+    ret.balance
 }
 
-pub fn qy_balance_nft(app: &App, addr: &Addr, token_id: &str, user: &str) -> bool {
-    let owner = app
-        .wrap()
-        .query_wasm_smart::<OwnerOfResponse>(
-            addr,
+pub fn qy_balance_nft(app: &TestMockApp, addr: &Addr, token_id: &str, user: &str) -> bool {
+    let ret: OwnerOfResponse = app
+        .query(
+            Addr::unchecked(addr),
             &cw721::Cw721QueryMsg::OwnerOf {
                 token_id: token_id.to_string(),
                 include_expired: None,
             },
         )
-        .unwrap()
-        .owner;
+        .unwrap();
 
-    owner == *user
+    ret.owner == *user
 }
