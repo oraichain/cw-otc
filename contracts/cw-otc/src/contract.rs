@@ -1,10 +1,11 @@
-use cosmwasm_std::{entry_point, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
+use cosmwasm_std::{
+    entry_point, to_json_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult,
+};
 
 use cw_otc_common::{
     definitions::Config,
     msgs::{ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg},
 };
-use rhaki_cw_plus::traits::{IntoAddr, IntoBinaryResult};
 
 use crate::{
     execute::{run_cancel_otc, run_claim_otc, run_create_otc, run_execute_otc},
@@ -22,9 +23,9 @@ pub fn instantiate(
 ) -> ContractResponse {
     let config = Config::new(
         deps.as_ref(),
-        msg.owner.clone().into_addr(deps.api)?,
+        deps.api.addr_validate(&msg.owner)?,
         msg.fee,
-        msg.fee_collector.into_addr(deps.api)?,
+        deps.api.addr_validate(&msg.fee_collector)?,
     )?;
     CONFIG.save(deps.storage, &config)?;
 
@@ -46,13 +47,13 @@ pub fn execute(deps: DepsMut, env: Env, info: MessageInfo, msg: ExecuteMsg) -> C
 #[entry_point]
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
-        QueryMsg::Position { id } => qy_position(deps, id).into_binary(),
+        QueryMsg::Position { id } => to_json_binary(&qy_position(deps, id)?),
         QueryMsg::Positions {
             limit,
             start_after,
             filters,
             order,
-        } => qy_positions(deps, start_after, limit, filters, order).into_binary(),
+        } => to_json_binary(&qy_positions(deps, start_after, limit, filters, order)?),
     }
 }
 

@@ -7,11 +7,6 @@ use cw_otc_common::{
     definitions::{OtcItem, OtcItemInfo, OtcPosition},
     msgs::{CreateOtcMsg, ExecuteOtcMsg, OtcItemRegistration},
 };
-use rhaki_cw_plus::{
-    math::IntoUint,
-    serde_value::{json, StdValue as Value},
-    traits::IntoAddr,
-};
 
 use super::app_ext::{MergeCoin, TestMockApp};
 pub type AppResult = MockResult<ExecuteResponse>;
@@ -70,7 +65,7 @@ pub fn startup(app: &mut TestMockApp, def: &mut Def) {
     let otc_addr = app
         .instantiate(
             otc_code_id,
-            def.owner.into_unchecked_addr(),
+            Addr::unchecked(def.owner),
             &cw_otc_common::msgs::InstantiateMsg {
                 owner: def.owner.to_string(),
                 fee: def.otc_fee.clone(),
@@ -121,7 +116,7 @@ pub fn create_token(
         TokenType::Cw20 => app
             .instantiate(
                 def.code_id_cw20.unwrap(),
-                def.owner.into_unchecked_addr(),
+                Addr::unchecked(def.owner),
                 &cw20_base::msg::InstantiateMsg {
                     name: token_name.to_string(),
                     symbol: token_name.to_string(),
@@ -130,7 +125,7 @@ pub fn create_token(
                         .into_iter()
                         .map(|(to, amount)| Cw20Coin {
                             address: to.to_string(),
-                            amount: amount.into_uint128(),
+                            amount: amount.try_into().unwrap(),
                         })
                         .collect(),
                     mint: Some(cw20::MinterResponse {
@@ -147,7 +142,7 @@ pub fn create_token(
             let addr = app
                 .instantiate(
                     def.code_id_cw721.unwrap(),
-                    def.owner.into_unchecked_addr(),
+                    Addr::unchecked(def.owner),
                     &cw721_base::msg::InstantiateMsg {
                         name: token_name.to_string(),
                         symbol: token_name.to_string(),
@@ -178,11 +173,11 @@ pub fn mint_token(
     match token_info.1 {
         TokenType::Cw20 => {
             app.execute(
-                def.owner.into_unchecked_addr(),
-                token_info.0.into_unchecked_addr(),
+                Addr::unchecked(def.owner),
+                Addr::unchecked(token_info.0),
                 &cw20_base::msg::ExecuteMsg::Mint {
                     recipient: to.to_string(),
-                    amount: amount.into_uint128(),
+                    amount: amount.try_into().unwrap(),
                 },
                 &[],
             )
@@ -192,19 +187,22 @@ pub fn mint_token(
             app.send_coins(
                 Addr::unchecked(def.owner),
                 Addr::unchecked(to),
-                &[Coin::new(amount.into_uint128().into(), token_info.0)],
+                &[Coin {
+                    amount: amount.try_into().unwrap(),
+                    denom: token_info.0.to_string(),
+                }],
             )
             .unwrap();
         }
         TokenType::Cw721 => {
             app.execute(
-                def.owner.into_unchecked_addr(),
-                token_info.0.into_unchecked_addr(),
-                &cw721_base::ExecuteMsg::Mint::<Value, Empty> {
+                Addr::unchecked(def.owner),
+                Addr::unchecked(token_info.0),
+                &cw721_base::ExecuteMsg::Mint::<Empty, Empty> {
                     token_id: amount.to_string(),
                     owner: to.to_string(),
                     token_uri: None,
-                    extension: json!({}),
+                    extension: Empty::default(),
                 },
                 &[],
             )
@@ -224,11 +222,11 @@ pub fn increase_allowance(
     match token_type {
         TokenType::Cw20 => {
             app.execute(
-                sender.into_unchecked_addr(),
+                Addr::unchecked(sender),
                 addr.clone(),
                 &cw20::Cw20ExecuteMsg::IncreaseAllowance {
                     spender: to.to_string(),
-                    amount: amount.into_uint128(),
+                    amount: amount.try_into().unwrap(),
                     expires: None,
                 },
                 &[],
@@ -237,9 +235,9 @@ pub fn increase_allowance(
         }
         TokenType::Cw721 => {
             app.execute(
-                sender.into_unchecked_addr(),
+                Addr::unchecked(sender),
                 addr.clone(),
-                &cw721_base::ExecuteMsg::Approve::<Value, Empty> {
+                &cw721_base::ExecuteMsg::Approve::<Empty, Empty> {
                     spender: to.to_string(),
                     token_id: amount.to_string(),
                     expires: None,
@@ -270,7 +268,7 @@ pub fn run_create_otc(
     let coins = coins.merge();
 
     app.execute(
-        creator.into_unchecked_addr(),
+        Addr::unchecked(creator),
         def.addr_otc.clone().unwrap(),
         &cw_otc_common::msgs::ExecuteMsg::CreateOtc(CreateOtcMsg {
             executor: Some(executor.to_string()),
@@ -296,7 +294,7 @@ pub fn run_execute_otc(
 
     let coins = coins.merge();
     app.execute(
-        sender.into_unchecked_addr(),
+        Addr::unchecked(sender),
         def.addr_otc.clone().unwrap(),
         &cw_otc_common::msgs::ExecuteMsg::ExecuteOtc(ExecuteOtcMsg { id }),
         &coins,

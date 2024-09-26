@@ -1,9 +1,19 @@
+use std::cmp::min;
+
+use cosmwasm_schema::serde::{de::DeserializeOwned, Serialize};
 use cosmwasm_std::{
-    attr, Addr, Attribute, Coin, CosmosMsg, DepsMut, Env, StdError, StdResult, Uint128,
+    attr, Addr, Attribute, Coin, CosmosMsg, DepsMut, Env, Order, StdError, StdResult, Storage,
+    Uint128,
 };
 use cw_otc_common::definitions::{OtcItem, OtcItemInfo, OtcPosition, OtcPositionStatus};
+use cw_storage_plus::{
+    Bound, IndexList, IndexedMap, KeyDeserialize, MultiIndex, Prefixer, PrimaryKey,
+};
 
 use crate::state::positions;
+
+const DEFAULT_LIMIT: u32 = 10;
+const MAX_LIMIT: u32 = 30;
 
 pub fn collect_otc_items(
     env: &Env,
@@ -86,28 +96,27 @@ pub fn build_send_otc_info_items(
 }
 
 pub fn assert_received_funds(items: &Vec<OtcItemInfo>, funds: Vec<Coin>) -> StdResult<Vec<Coin>> {
-    let mut coins = rhaki_cw_plus::coin::vec_coins_to_hashmap(funds)?;
+    let mut coins = vec![];
 
     for item in items {
         if let OtcItemInfo::Token { denom, amount } = &item {
-            let available_amount = coins
-                .get(denom)
-                .ok_or(StdError::generic_err(format!("Coin not received {denom}")))?;
+            let available_amount = funds
+                .iter()
+                .find(|c| c.denom.eq(denom))
+                .ok_or(StdError::generic_err(format!("Coin not received {denom}")))?
+                .amount;
 
-            if amount > available_amount {
+            if amount.gt(&available_amount) {
                 return Err(StdError::generic_err(format!(
                     "Amount received for {denom} is to low: expected: {amount}, received: {amount}"
                 )));
             }
 
-            coins.insert(denom.clone(), available_amount - amount);
+            coins.push(Coin::new((available_amount - amount).u128(), denom));
         }
     }
 
-    Ok(coins
-        .into_iter()
-        .map(|(denom, amount)| Coin::new(amount.u128(), denom))
-        .collect())
+    Ok(coins)
 }
 
 pub fn after_action(
@@ -140,4 +149,55 @@ pub fn after_action(
     }
 
     Ok(attributes)
+}
+
+/// Load the values of a `cw_storage_plus::IndexMap` of a sub `MultiIndex`, ordered by `Order::Ascending` or `Order::Descending`
+pub fn get_multi_index_values<
+    'a,
+    IK: PrimaryKey<'a> + Prefixer<'a>,
+    T: Serialize + DeserializeOwned + Clone,
+    PK: PrimaryKey<'a> + KeyDeserialize + 'static,
+>(
+    storage: &dyn Storage,
+    key: IK,
+    index: MultiIndex<'a, IK, T, PK>,
+    order: Order,
+    start_after: Option<PK>,
+    limit: Option<u32>,
+) -> StdResult<Vec<(PK::Output, T)>> {
+    let (min_b, max_b) = match order {
+        Order::Ascending => (start_after.map(Bound::exclusive), None),
+        Order::Descending => (None, start_after.map(Bound::exclusive)),
+    };
+
+    Ok(index
+        .prefix(key)
+        .range(storage, min_b, max_b, order)
+        .take((min(MAX_LIMIT, limit.unwrap_or(DEFAULT_LIMIT))) as usize)
+        .map(|item| item.unwrap())
+        .collect())
+}
+
+pub fn get_items<
+    'a,
+    T: Serialize + DeserializeOwned + Clone,
+    K: PrimaryKey<'a> + KeyDeserialize + 'static,
+    I: IndexList<T>,
+>(
+    storage: &dyn Storage,
+    index: IndexedMap<'a, K, T, I>,
+    order: Order,
+    limit: Option<u32>,
+    start_after: Option<K>,
+) -> StdResult<Vec<(K::Output, T)>> {
+    let (min_b, max_b) = match order {
+        Order::Ascending => (start_after.map(Bound::exclusive), None),
+        Order::Descending => (None, start_after.map(Bound::exclusive)),
+    };
+
+    Ok(index
+        .range(storage, min_b, max_b, order)
+        .take(min(MAX_LIMIT, limit.unwrap_or(DEFAULT_LIMIT)) as usize)
+        .map(|item| item.unwrap())
+        .collect())
 }

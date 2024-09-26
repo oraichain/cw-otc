@@ -2,9 +2,8 @@ use std::cmp::min;
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{
-    Addr, BankMsg, Coin, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Uint128, WasmMsg,
+    wasm_execute, Addr, BankMsg, Coin, CosmosMsg, Decimal, Deps, Env, StdError, StdResult, Uint128,
 };
-use rhaki_cw_plus::{traits::IntoAddr, wasm::WasmMsgBuilder};
 
 use super::msgs::{CreateOtcMsg, OtcItemRegistration, VestingInfoRegistration};
 
@@ -151,11 +150,8 @@ impl OtcItemInfo {
     pub fn validate(&self, deps: Deps) -> StdResult<()> {
         match self {
             OtcItemInfo::Token { .. } => Ok(()),
-            OtcItemInfo::Cw20 { contract, .. } => {
-                contract.to_string().into_addr(deps.api).map(|_| ())
-            }
-            OtcItemInfo::Cw721 { contract, .. } => {
-                contract.to_string().into_addr(deps.api).map(|_| ())
+            OtcItemInfo::Cw20 { contract, .. } | OtcItemInfo::Cw721 { contract, .. } => {
+                deps.api.addr_validate(contract.as_str()).map(|_| ())
             }
         }
     }
@@ -194,9 +190,9 @@ impl OtcItemInfo {
                 }
                 .into())
             }
-            OtcItemInfo::Cw20 { contract, amount } => Ok(WasmMsg::build_execute(
+            OtcItemInfo::Cw20 { contract, amount } => Ok(wasm_execute(
                 contract,
-                if env.contract.address == sender {
+                &if env.contract.address == sender {
                     cw20::Cw20ExecuteMsg::Transfer {
                         recipient: to.to_string(),
                         amount: override_amount.unwrap_or(*amount).to_owned(),
@@ -211,9 +207,9 @@ impl OtcItemInfo {
                 vec![],
             )?
             .into()),
-            OtcItemInfo::Cw721 { contract, token_id } => Ok(WasmMsg::build_execute(
+            OtcItemInfo::Cw721 { contract, token_id } => Ok(wasm_execute(
                 contract,
-                cw721::Cw721ExecuteMsg::TransferNft {
+                &cw721::Cw721ExecuteMsg::TransferNft {
                     recipient: to.to_string(),
                     token_id: token_id.to_owned(),
                 },
@@ -238,7 +234,7 @@ pub struct OtcPosition {
 impl OtcPosition {
     pub fn validate(&self, deps: Deps) -> StdResult<()> {
         if let Some(executor) = &self.executor {
-            executor.to_string().into_addr(deps.api)?;
+            deps.api.addr_validate(executor.as_str())?;
         }
 
         for item in self.offer.iter().chain(self.ask.iter()) {
@@ -259,7 +255,7 @@ impl OtcPosition {
             owner,
             executor: msg
                 .executor
-                .map(|val| val.into_addr(deps.api))
+                .map(|val| deps.api.addr_validate(&val))
                 .transpose()?,
             offer: msg.offer.into_iter().map(|val| val.into()).collect(),
             ask: msg.ask.into_iter().map(|val| val.into()).collect(),

@@ -1,9 +1,8 @@
-use cosmwasm_std::{DepsMut, Env, MessageInfo, Response, StdError};
+use cosmwasm_std::{Addr, DepsMut, Env, MessageInfo, Response, StdError};
 use cw_otc_common::{
     definitions::OtcPosition,
     msgs::{CancelOtcMsg, ClaimOtcMsg, CreateOtcMsg, ExecuteOtcMsg},
 };
-use rhaki_cw_plus::traits::IntoAddr;
 
 use crate::{
     functions::{after_action, cancel_otc, collect_otc_items, send_fee, send_otc_items},
@@ -44,9 +43,7 @@ pub fn run_create_otc(
         .add_attribute("action", "create_orc")
         .add_attribute(
             "executor",
-            position
-                .executor
-                .unwrap_or("undefined".into_unchecked_addr()),
+            position.executor.unwrap_or(Addr::unchecked("undefined")),
         )
         .add_attribute("otc_id", config.counter_otc.to_string()))
 }
